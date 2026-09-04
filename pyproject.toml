@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hypervisc"
+version = "0.1.0"
+description = "Skin-friction (Cf) drag models for HyperMDAO, selectable by name like the nozzle surrogate registry."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    'numpy >= 1.23.5',
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

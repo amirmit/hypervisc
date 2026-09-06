@@ -1,6 +1,6 @@
 import numpy as np
 
-from hypervisc import get_friction_model, friction_force
+from hypervisc import get_friction_model, friction_drag, friction_drag_sens
 from hypervisc.registry import _CACHE
 
 
@@ -22,13 +22,29 @@ def test_constant_model_matches_old_hardcoded_formula():
     freestream = FakeFreestream()
 
     cf_model = get_friction_model("constant", cf_value=0.001)
-    Df, dDf_dp = friction_force(cells, freestream, cf_model)
+    Df = friction_drag(cells, freestream, cf_model)
+    dDf_dp = friction_drag_sens(cells, freestream, cf_model)
 
     Df_old = freestream.q * 0.001 * cells.A_int
     dDf_dp_old = freestream.q * 0.001 * cells.dAdp_int
 
     assert np.isclose(Df, Df_old)
     assert np.allclose(dDf_dp, dDf_dp_old)
+
+
+def test_value_and_sens_agree_with_each_other():
+    """friction_drag and friction_drag_sens are now independent calls (no
+    longer a single function returning both) -- guard against them ever
+    resolving to inconsistent Cf models."""
+    cells = FakeCells()
+    freestream = FakeFreestream()
+    cf_model = get_friction_model("constant", cf_value=0.0015)
+
+    Df = friction_drag(cells, freestream, cf_model)
+    dDf_dp = friction_drag_sens(cells, freestream, cf_model)
+
+    assert np.isclose(Df, freestream.q * 0.0015 * cells.A_int)
+    assert np.allclose(dDf_dp, freestream.q * 0.0015 * cells.dAdp_int)
 
 
 def test_registry_caches_by_name_and_params():

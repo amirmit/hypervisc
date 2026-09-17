@@ -1,4 +1,4 @@
-# HyperVisc
+# hypervisc
 
 Skin-friction (Cf) drag models for the HyperMDAO external-body friction term.
 

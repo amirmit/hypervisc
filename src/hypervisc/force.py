@@ -1,53 +1,30 @@
-"""Friction-drag force and its design-parameter gradient, from a resolved
-Cf model plus a pysagas CellArray/FlowState. Handles both a scalar Cf
-(today's ConstantCfModel) and a per-cell Cf array matching cells.A (a
-future spatially-varying model) without a different call signature.
-
-Split into a value-only function (friction_drag, for Run_ObjFunc.py) and a
-gradient-only function (friction_drag_sens, for Run_SensFunc.py) rather
-than one function returning both -- so the objective-value path never
-pays for cf_model.dcf_dp() (a future fitted model's derivative call) when
-only Df is needed. Both share _cf_weighted for the Cf * area reduction so
-that scalar-vs-per-cell branch exists exactly once.
+"""Friction-drag force from a resolved Cf model, a wetted area, and a
+dynamic pressure. `area` and `q` are typically `FloatWithSens` (autodiff's
+dual-number scalar -- matching hypervehicle2's `mesh.surface_area` and the
+new-stack `FlowState.q_dyn`), so Df's sensitivity to design parameters comes
+for free through their own arithmetic; plain floats work too when
+sensitivities aren't needed. hypervisc has no dependency on autodiff itself
+-- Df's sens is updated by mutating the `.sens` attribute of whatever
+`cf * q * area` already returns (duck-typed), not by constructing a new
+FloatWithSens.
 """
 
 import numpy as np
 
 
-def _cf_weighted(Cf, A_reduced, A_full):
-    """Cf (scalar, or a per-cell array matching A_full's last axis) times
-    an area quantity, integrated over cells. A_reduced is the
-    already-cell-summed quantity (cells.A_int / cells.dAdp_int) -- used
-    directly when Cf is uniform. A_full is its per-cell counterpart
-    (cells.A / cells.dAdp) -- used to weight each cell separately when Cf
-    is not uniform."""
-    if Cf.ndim == 0:
-        return float(Cf) * A_reduced
-    if A_full.ndim == 1:
-        return np.sum(Cf * A_full)
-    return np.sum(Cf[None, :] * A_full, axis=1)
+def _value(x):
+    return x.number if hasattr(x, "number") else x
 
 
-def friction_drag(cells, freestream, cf_model):
-    """Df: the friction-drag magnitude (opposes +x). Calls only
-    cf_model.cf() -- never .dcf_dp() -- since the objective-value path has
-    no use for a gradient."""
-    Cf = np.asarray(cf_model.cf(cells=cells, freestream=freestream))
-    return freestream.q * _cf_weighted(Cf, cells.A_int, cells.A)
+def friction_drag(area, q, cf_model):
+    """Df = Cf * q * area (opposes +x). `cf_model.dcf_dp()` -- Cf's own
+    direct dependence on a design parameter, on top of whatever sens area/q
+    already carry -- is added onto Df's sens in place."""
+    cf = cf_model.cf(area=area, q=q)
+    Df = cf * q * area
 
-
-def friction_drag_sens(cells, freestream, cf_model):
-    """dDf_dp: gradient of the friction drag, over the same parameter
-    axis as cells.dAdp_int."""
-    Cf = np.asarray(cf_model.cf(cells=cells, freestream=freestream))
-    dDf_dp = freestream.q * _cf_weighted(Cf, cells.dAdp_int, cells.dAdp)
-
-    dcf_dp = cf_model.dcf_dp(cells=cells, freestream=freestream)
+    dcf_dp = cf_model.dcf_dp(area=area, q=q)
     if dcf_dp is not None:
-        dcf_dp = np.asarray(dcf_dp)
-        if Cf.ndim == 0:
-            dDf_dp = dDf_dp + freestream.q * cells.A_int * dcf_dp
-        else:
-            dDf_dp = dDf_dp + freestream.q * np.sum(dcf_dp * cells.A, axis=1)
+        Df.sens = Df.sens + np.asarray(dcf_dp) * _value(q) * _value(area)
 
-    return dDf_dp
+    return Df

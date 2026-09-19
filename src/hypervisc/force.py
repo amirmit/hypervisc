@@ -9,22 +9,26 @@ sensitivities aren't needed. hypervisc has no dependency on autodiff itself
 FloatWithSens.
 """
 
-import numpy as np
+from utilities import AeroResults, Vector3
+from autodiff import FloatWithSens
 
-
-def _value(x):
-    return x.number if hasattr(x, "number") else x
-
-
-def friction_drag(area, q, cf_model):
+def friction_drag(area, freestream, cf_model):
     """Df = Cf * q * area (opposes +x). `cf_model.dcf_dp()` -- Cf's own
     direct dependence on a design parameter, on top of whatever sens area/q
     already carry -- is added onto Df's sens in place."""
-    cf = cf_model.cf(area=area, q=q)
+
+    q = freestream.q_dyn
+    cf_val = cf_model.cf(area=area, q=q)
+    cf_sens = cf_model.dcf_dp(area=area, q=q) or [0]*FloatWithSens.N
+    cf = FloatWithSens(cf_val, cf_sens)
+
     Df = cf * q * area
 
-    dcf_dp = cf_model.dcf_dp(area=area, q=q)
-    if dcf_dp is not None:
-        Df.sens = Df.sens + np.asarray(dcf_dp) * _value(q) * _value(area)
+    net_force = Vector3(x=-Df, y=0, z=0)
+    net_moment = Vector3(x=0, y=0, z=0)
 
-    return Df
+    friction_force = AeroResults(
+        flow_state=freestream, force=net_force, moment=net_moment
+    )
+
+    return friction_force

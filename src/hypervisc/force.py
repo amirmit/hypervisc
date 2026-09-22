@@ -28,21 +28,23 @@ def _cf_weighted(Cf, A_reduced, A_full):
     return np.sum(Cf[None, :] * A_full, axis=1)
 
 
-def friction_drag(cells, freestream, cf_model):
+def friction_drag(cells, freestream, cf_model, length=None):
     """Df: the friction-drag magnitude (opposes +x). Calls only
     cf_model.cf() -- never .dcf_dp() -- since the objective-value path has
-    no use for a gradient."""
-    Cf = np.asarray(cf_model.cf(cells=cells, freestream=freestream))
+    no use for a gradient. `length` is only meaningful to a model that
+    needs it (e.g. MeadorSmartCfModel); ConstantCfModel ignores it."""
+    Cf = np.asarray(cf_model.cf(cells=cells, freestream=freestream, length=length))
     return freestream.q * _cf_weighted(Cf, cells.A_int, cells.A)
 
 
-def friction_drag_sens(cells, freestream, cf_model):
+def friction_drag_sens(cells, freestream, cf_model, length=None, dlength_dp=None):
     """dDf_dp: gradient of the friction drag, over the same parameter
     axis as cells.dAdp_int."""
-    Cf = np.asarray(cf_model.cf(cells=cells, freestream=freestream))
+    Cf = np.asarray(cf_model.cf(cells=cells, freestream=freestream, length=length))
     dDf_dp = freestream.q * _cf_weighted(Cf, cells.dAdp_int, cells.dAdp)
 
-    dcf_dp = cf_model.dcf_dp(cells=cells, freestream=freestream)
+    dcf_dp = cf_model.dcf_dp(cells=cells, freestream=freestream,
+                              length=length, dlength_dp=dlength_dp)
     if dcf_dp is not None:
         dcf_dp = np.asarray(dcf_dp)
         if Cf.ndim == 0:

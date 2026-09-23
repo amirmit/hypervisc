@@ -1,13 +1,23 @@
 """Skin-friction-coefficient models.
 
 A model supplies Cf (scalar, uniform over the wetted area -- or a per-cell
-array matching CellArray.A, for a future spatially-varying model) and its
-gradient w.r.t. design parameters (or None, if the model has none). Both
-`cf()` and `dcf_dp()` accept `cells`/`freestream`/`flow_state` as keyword
-context, plus `length`/`dlength_dp` (vehicle reference length and its
-design-parameter sensitivity -- needed by MeadorSmartCfModel, ignored by
+array matching CellArray.A, for a future spatially-varying model). `cf()`
+accepts `cells`/`freestream`/`flow_state` as keyword context, plus `length`
+(vehicle reference length -- needed by MeadorSmartCfModel, ignored by
 ConstantCfModel), so a future model conditioned on local flow state doesn't
 need a different call site.
+
+No separate hand-written d(Cf)/d(param) method: `length` (and any future
+DV-dependent context) is a hyperVehicle FloatWithSens dual number whenever
+a gradient is needed (autodiff is already active throughout calc_vehicle()),
+so a model that derives Cf from it via ordinary arithmetic -- as
+MeadorSmartCfModel does -- gets a correctly-propagated FloatWithSens Cf back
+for free. force.py's friction_drag_sens() extracts value/gradient from
+whatever cf() returns with get_number()/get_sens(), which already handle a
+plain-float Cf (e.g. ConstantCfModel, no DV dependence) as an all-zero
+gradient with no per-model special-casing. This trades hypervisc's previous
+numpy-only self-containment for one dependency on hypervehicle -- accepted
+deliberately in favour of not hand-deriving chain rules per model.
 """
 
 import pickle
@@ -19,14 +29,6 @@ import numpy as np
 class FrictionModel:
     def cf(self, *, cells=None, freestream=None, flow_state=None, length=None):
         raise NotImplementedError
-
-    def dcf_dp(self, *, cells=None, freestream=None, flow_state=None,
-               length=None, dlength_dp=None):
-        """d(Cf)/d(param). Return None if Cf has no design-parameter
-        dependence (the common case) -- callers treat None as an all-zero
-        contribution rather than requiring every model to build a zero
-        array of the right shape."""
-        return None
 
 
 @dataclass
@@ -88,12 +90,10 @@ class MeadorSmartCfModel(FrictionModel):
         return float(10 ** self._spline(q, mach, grid=False))
 
     def cf(self, *, freestream, length, **kwargs):
+        # length ** (-n_exp) works unchanged whether length is a plain
+        # float (friction_drag's value-only path) or a FloatWithSens dual
+        # number (friction_drag_sens's gradient path, via ** overloading)
+        # -- Cf_x has no DV-dependence (Mach/q are flight-condition state,
+        # not DVs), so the whole gradient comes from this line alone.
         cfx = self._cf_x(freestream)
         return cfx * length ** (-self._n_exp)
-
-    def dcf_dp(self, *, freestream, length, dlength_dp, **kwargs):
-        # Cf_x has no DV-dependence (Mach/q are flight-condition state,
-        # not DVs) -- the whole gradient comes from the L^-n_exp chain rule.
-        cfx = self._cf_x(freestream)
-        dcf_dL = -self._n_exp * cfx * length ** (-self._n_exp - 1)
-        return dcf_dL * dlength_dp

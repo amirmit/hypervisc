@@ -4,10 +4,11 @@ switching models is a config change (opt_input.py's cf_model/cf_params),
 not a call-site change. A future fitted model registers its own class here
 (e.g. "v1_kriging" loading a pickle, mirroring SurrogateGen/nozzle_v3/)."""
 
-from .friction_model import ConstantCfModel
+from .friction_model import ConstantCfModel, MeadorSmartCfModel
 
 _MODEL_CLASSES = {
     "constant": ConstantCfModel,
+    "meador_smart": MeadorSmartCfModel,
 }
 
 _CACHE = {}

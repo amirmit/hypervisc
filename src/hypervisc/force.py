@@ -1,26 +1,37 @@
 """Friction-drag force from a resolved Cf model, a wetted area, and a
-dynamic pressure. `area` and `q` are typically `FloatWithSens` (autodiff's
-dual-number scalar -- matching hypervehicle2's `mesh.surface_area` and the
-new-stack `FlowState.q_dyn`), so Df's sensitivity to design parameters comes
-for free through their own arithmetic; plain floats work too when
-sensitivities aren't needed. hypervisc has no dependency on autodiff itself
--- Df's sens is updated by mutating the `.sens` attribute of whatever
-`cf * q * area` already returns (duck-typed), not by constructing a new
-FloatWithSens.
+freestream FlowState.
+
+`area` (and `length`, for models that use it) are typically autodiff
+`FloatWithSens` dual numbers -- the wetted area summed from the mesh, and the
+vehicle length from the geometry -- so Df's sensitivity to design parameters
+propagates through ordinary arithmetic: `Df = cf * q_dyn * area` picks up
+area's sens by the product rule, and cf's own sens (if the model's Cf depends
+on a dual-number input such as `length`) rides along in `cf`. Plain floats
+work too when sensitivities aren't needed. `freestream.q_dyn` is a plain
+float (flight condition, not a design variable).
+
+There is no per-model derivative hook: a model that wants a Cf gradient just
+computes Cf from the dual-number inputs it is handed (see
+MeadorSmartCfModel), and a model with no DV dependence (ConstantCfModel)
+returns a plain float, which contributes nothing to the gradient.
+hypervisc therefore depends on autodiff for the dual-number type.
 """
 
 from utilities import AeroResults, Vector3
-from autodiff import FloatWithSens
+from autodiff import FloatWithSens, get_sens
 
-def friction_drag(area, freestream, cf_model):
-    """Df = Cf * q * area (opposes +x). `cf_model.dcf_dp()` -- Cf's own
-    direct dependence on a design parameter, on top of whatever sens area/q
-    already carry -- is added onto Df's sens in place."""
+def friction_drag(area, freestream, cf_model, length=None):
+    """Df = Cf * q_dyn * area, returned as an AeroResults whose force is
+    (-Df, 0, 0) -- friction opposes +x -- and moment is zero.
+
+    `freestream` supplies q_dyn and is also passed to the model (Mach/q for
+    MeadorSmartCfModel). `length` is the vehicle reference length; it is
+    required by MeadorSmartCfModel and ignored by ConstantCfModel. Cf's own
+    sensitivity (via a dual-number `length`) is taken from whatever the
+    model's cf() returns."""
 
     q = freestream.q_dyn
-    cf_val = cf_model.cf(area=area, q=q)
-    cf_sens = cf_model.dcf_dp(area=area, q=q) or [0]*FloatWithSens.N
-    cf = FloatWithSens(cf_val, cf_sens)
+    cf = cf_model.cf(freestream=freestream, length=length)
 
     Df = cf * q * area
 

@@ -22,13 +22,18 @@ deliberately in favour of not hand-deriving chain rules per model.
 
 import pickle
 from dataclasses import dataclass
-
 import numpy as np
 
-
 class FrictionModel:
-    def cf(self, *, cells=None, freestream=None, flow_state=None, length=None):
+    def cf(self, **kwargs):
         raise NotImplementedError
+
+    def dcf_dp(self, **kwargs):
+        """d(Cf)/d(param). Return None if Cf has no design-parameter
+        dependence (the common case) -- callers treat None as an all-zero
+        contribution rather than requiring every model to build a zero
+        array of the right shape."""
+        return None
 
 
 @dataclass
@@ -40,6 +45,7 @@ class ConstantCfModel(FrictionModel):
 
     def cf(self, **kwargs):
         return self.cf_value
+
 
 
 @dataclass
@@ -85,7 +91,7 @@ class MeadorSmartCfModel(FrictionModel):
         """Cf_x(M, q) -- recomputed every call (not cached): M/q can
         differ call to call along a trajectory. Clamped to the fitted
         range rather than validated/raised."""
-        mach = np.clip(freestream.M, *self._mach_bounds)
+        mach = np.clip(freestream.mach, *self._mach_bounds)
         q = np.clip(freestream.q, *self._q_bounds)
         return float(10 ** self._spline(q, mach, grid=False))
 

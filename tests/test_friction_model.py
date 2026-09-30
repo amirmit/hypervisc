@@ -5,18 +5,19 @@ import numpy as np
 import pytest
 from scipy.interpolate import RectBivariateSpline
 
-from hypervisc import get_friction_model, friction_drag, friction_drag_sens, MeadorSmartCfModel
+from hypervisc import get_friction_model, friction_drag, friction_drag_sens
 from hypervisc.registry import _CACHE
 
 
-class FakeCells:
-    def __init__(self, n_params=3, n_cells=5, seed=0):
-        rng = np.random.default_rng(seed)
-        self.A = rng.uniform(0.1, 1.0, n_cells)
-        self.A_int = np.sum(self.A)
-        self.dAdp = rng.uniform(-1.0, 1.0, (n_params, n_cells))
-        self.dAdp_int = np.sum(self.dAdp, axis=1)
+class FakeScalarWithSens:
+    """Minimal duck-type of autodiff.FloatWithSens -- just enough
+    multiplication (with the product rule) for friction_drag to exercise
+    the same sens-propagation path FWS provides, without hypervisc
+    depending on autodiff."""
 
+    def __init__(self, number, sens):
+        self.number = number
+        self.sens = np.asarray(sens, dtype=float)
 
 class FakeFreestream:
     q = 45000.0
@@ -146,36 +147,33 @@ def test_friction_drag_threads_length_through(tmp_path):
     Df = friction_drag(cells, freestream, model, length=L)
     expected_cf = 1e-3 * L ** (-0.139)
     assert np.isclose(Df, freestream.q * expected_cf * cells.A_int)
+    def __mul__(self, other):
+        if isinstance(other, FakeScalarWithSens):
+            return FakeScalarWithSens(
+                self.number * other.number,
+                self.number * other.sens + self.sens * other.number,
+            )
+        return FakeScalarWithSens(self.number * other, self.sens * other)
+
+    __rmul__ = __mul__
 
 
 def test_constant_model_matches_old_hardcoded_formula():
-    cells = FakeCells()
-    freestream = FakeFreestream()
-
+    area = FakeScalarWithSens(3.5, [0.1, -0.2, 0.05])
+    q = FakeScalarWithSens(45000.0, [0.0, 1.0, 0.0])
     cf_model = get_friction_model("constant", cf_value=0.001)
-    Df = friction_drag(cells, freestream, cf_model)
-    dDf_dp = friction_drag_sens(cells, freestream, cf_model)
 
-    Df_old = freestream.q * 0.001 * cells.A_int
-    dDf_dp_old = freestream.q * 0.001 * cells.dAdp_int
+    Df = friction_drag(area, q, cf_model)
 
-    assert np.isclose(Df, Df_old)
-    assert np.allclose(dDf_dp, dDf_dp_old)
+    assert np.isclose(Df.number, 0.001 * 45000.0 * 3.5)
+    expected_sens = 0.001 * (q.number * area.sens + area.number * q.sens)
+    assert np.allclose(Df.sens, expected_sens)
 
 
-def test_value_and_sens_agree_with_each_other():
-    """friction_drag and friction_drag_sens are now independent calls (no
-    longer a single function returning both) -- guard against them ever
-    resolving to inconsistent Cf models."""
-    cells = FakeCells()
-    freestream = FakeFreestream()
+def test_plain_floats_work_without_sens():
     cf_model = get_friction_model("constant", cf_value=0.0015)
-
-    Df = friction_drag(cells, freestream, cf_model)
-    dDf_dp = friction_drag_sens(cells, freestream, cf_model)
-
-    assert np.isclose(Df, freestream.q * 0.0015 * cells.A_int)
-    assert np.allclose(dDf_dp, freestream.q * 0.0015 * cells.dAdp_int)
+    Df = friction_drag(3.5, 45000.0, cf_model)
+    assert np.isclose(Df, 0.0015 * 45000.0 * 3.5)
 
 
 def test_registry_caches_by_name_and_params():
